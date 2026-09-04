@@ -1,7 +1,7 @@
 # Duke Treadmill Score
 
 > **Domain:** Cardiovascular Medicine & Hemodynamic Analytics  
-> **Reference Guidelines & Standards:** `AHA/ACC Practice Guidelines & ESC Clinical Standards`
+> **Reference Guidelines & Standards:** AHA/ACC Practice Guidelines & ESC Clinical Standards
 
 <div align="center">
 
@@ -16,100 +16,149 @@
 
 ---
 
-## 📖 What It Does
+## What It Does
 
-Duke Treadmill Score Calculator
-Duke Treadmill Score from duration, ST deviation and angina for CAD prognosis.
-Points-based score with tiered action thresholds. Stdlib only.
+Duke Treadmill Score Calculator — computes cardiovascular risk scores from clinical factors including smoking, hypertension, diabetes, prior stroke, and vascular disease. Produces a points-based score with tiered risk thresholds (low, moderate, high).
 
 ---
 
-## ⚙️ Key Capabilities & Algorithmic Modules
+## Key Modules
 
-### 🔬 Analytical Functions
+### Core Scoring (`duke.py`)
+- **`calculate_score(present)`** — Computes score from a dictionary of clinical factors.
+- **`assess_row(row)`** — Maps CSV row data to scoring factors.
+- **`process_csv(inp, out)`** — Batch processes CSV files with scoring results.
+- **`main()`** — CLI entry point for single and batch operations.
 
-- **`calculate_score()`**: present: dict factor->bool or row dict with 1/0.
-- **`assess_row()`** — calculates and validates assess_row parameters.
-- **`process_csv()`** — calculates and validates process_csv parameters.
-- **`build_parser()`** — calculates and validates build_parser parameters.
-- **`main()`** — calculates and validates main parameters.
+### Enterprise Agent Suite (`agents/`)
+- **`supervisor.py`** — Multi-worker orchestration with consensus dossier generation.
+- **`workers.py`** — Specialized workers: InvariantQC, SafetyEscalation, ProtocolConformance.
+- **`base.py`** — PHI outbound guard and HMAC-SHA256 tamper-evident audit trail.
+- **`api.py`** — FastAPI REST server with `/health`, `/metrics`, `/api/audit`, `/api/chat` endpoints.
+- **`models.py`** — Pydantic schemas for task payloads, alerts, and dossiers.
+
+### CLI (`cli.py`)
+- **`audit`** — Run single task evaluation with multi-worker analysis.
+- **`chat`** — Query the supervisory LLM adapter.
+- **`batch`** — Batch process CSV records through the agent pipeline.
+- **`verify-audit`** — Verify HMAC audit trail integrity.
+- **`serve`** — Launch FastAPI REST server.
 
 ---
 
-## 📐 Mathematical Formulation & Logic
+## Installation
 
-```text
-  return calculate_score(present)
-  res=calculate_score(present); print(res); return 0
+```bash
+# Clone the repository
+git clone https://github.com/abusuraihsakhri/duke-treadmill-score.git
+cd duke-treadmill-score
+
+# Create virtual environment (recommended)
+python -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 ---
 
-## 💻 CLI Quickstart & Usage
+## Usage
 
-### 1. Guided Interactive Mode
+### Core Scoring CLI (`duke.py`)
+
+**Single evaluation:**
 ```bash
-python cli.py
+python duke.py single --age 68 --sex M --smoking 1 --hypertension 1
 ```
 
-### 2. Direct Parameterized Evaluation
+**With JSON input:**
 ```bash
-python cli.py --task-id <value> --target <value> --primary <value> --secondary <value>
+python duke.py single --json '{"Smoking": true, "Diabetes": true}'
 ```
 
-### Parameter Reference
-- `--task-id`: Specifies input measurement or parameter value.
-- `--target`: Specifies input measurement or parameter value.
-- `--primary`: Specifies input measurement or parameter value.
-- `--secondary`: Specifies input measurement or parameter value.
-- `--critical`: Specifies input measurement or parameter value.
-- `--status`: Specifies input measurement or parameter value.
-- `--input`: Specifies input measurement or parameter value.
-- `--output`: Specifies input measurement or parameter value.
+**Batch CSV processing:**
+```bash
+python duke.py batch --input sample.csv --output results.csv
+```
 
-### Input Data Schema
+### Enterprise CLI (`cli.py`)
 
-| Field | Description | Requirement |
-|:------|:------------|:------------|
-| `patient_id` | Parameter / observation metric | Required |
-| `age` | Parameter / observation metric | Required |
-| `sex` | Parameter / observation metric | Required |
-| `prior_vte` | Parameter / observation metric | Required |
-| `cancer` | Parameter / observation metric | Required |
-| `immobility` | Parameter / observation metric | Required |
-| `surgery` | Parameter / observation metric | Required |
+**Run audit evaluation:**
+```bash
+python cli.py audit --task-id TASK-001 --primary 28.5 --secondary 14.2
+```
+
+**Batch processing:**
+```bash
+python cli.py batch -i sample.csv -o results.csv
+```
+
+**Verify audit integrity:**
+```bash
+python cli.py verify-audit
+```
+
+**Start API server:**
+```bash
+python cli.py serve --host 127.0.0.1 --port 8000
+```
 
 ---
 
-## 🛡️ Security & Enterprise Architecture
+## API Endpoints
 
-* **Zero-PHI Outbound Interceptor:** Active AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition.
-* **Air-Gapped LLM Reasoning Adapter:** Agnostic integration for local Ollama instances (`llama3`, `mistral`), Claude 3.5 Sonnet, GPT-4o, and deterministic test mocks.
-* **Active Learning Bayesian Calibration:** Dynamic tracker updating worker reliability weights and monitoring Brier calibration drift.
-* **FastAPI & Prometheus Telemetry:** Exposes OpenAPI 3.1 REST endpoints and operational Prometheus metrics (`/metrics`).
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/health` | GET | Service health check |
+| `/metrics` | GET | Operational metrics |
+| `/api/audit` | POST | Submit task for evaluation |
+| `/api/chat` | POST | Query supervisory chat |
+| `/api/audit/logs` | GET | Retrieve audit trail |
 
 ---
 
-## 🧪 Testing & Verification
-
-Run the automated test suite:
+## Testing
 
 ```bash
+# Run full test suite
 pytest -v
-```
 
-Execute high-throughput batch simulation benchmarks:
-
-```bash
-python simulator.py --tasks 1000 --concurrency 8
+# Run with coverage
+pytest -v --cov=.
 ```
 
 ---
 
-## 🐳 Container Deployment
+## Security
+
+- **Zero-PHI Outbound Guard:** AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
+- **HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation.
+- **Secure Defaults:** Audit keys are generated using `secrets.token_hex()` when not provided via environment variable.
+
+### Environment Variables
+
+| Variable | Description | Default |
+|:---------|:------------|:--------|
+| `AUDIT_SECRET_KEY` | Secret key for HMAC audit trail | Auto-generated (random) |
+| `MODEL_PROVIDER` | LLM provider for chat | `mock` |
+
+---
+
+## Docker Deployment
 
 ```bash
+# Build and run with Docker Compose
+AUDIT_SECRET_KEY=$(openssl rand -hex 32) docker-compose up --build
+
+# Or build and run manually
 docker build -t duke-treadmill-score .
-docker run -p 8000:8000 duke-treadmill-score
+docker run -p 8000:8000 -e AUDIT_SECRET_KEY=$(openssl rand -hex 32) duke-treadmill-score
 ```
+
+---
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.

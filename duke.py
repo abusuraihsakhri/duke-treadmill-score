@@ -18,17 +18,13 @@ THRESHOLDS = [(2,"low"),(4,"moderate"),(100,"high")]
 
 def calculate_score(present):
     """present: dict factor->bool or row dict with 1/0."""
+    if not isinstance(present, dict):
+        raise ValueError("present must be a dictionary")
     score=0; detail={}
     for name,w in FACTORS:
         # accept 1/0, true/false, yes/no, present key in dict
         val = present.get(name, present.get(name.lower().replace(" ","_"), 0))
         is_pos = str(val).lower() in ("1","true","yes","y") or val==1 or val is True
-        # also auto-map common csv columns: age, sex, etc.
-        if not is_pos and name=="Age>60":
-            try: is_pos = float(present.get("age",0))>60
-            except: pass
-        if not is_pos and name=="Male":
-            is_pos = str(present.get("sex","")).upper()=="M"
         if is_pos:
             score+=w
             detail[name]=w
@@ -42,24 +38,40 @@ def calculate_score(present):
 def assess_row(row):
     # row is dict from csv
     # map csv columns to present
+    if not isinstance(row, dict):
+        raise ValueError("row must be a dictionary")
     present = {}
     for k,v in row.items():
-        present[k]=v
-        present[k.lower()]=v
-    # also map snake
+        if k:
+            present[k]=v
+            present[k.lower()]=v
     return calculate_score(present)
 
 def process_csv(inp,out):
     import csv
-    with open(inp, newline="", encoding="utf-8-sig") as f:
-        r=csv.DictReader(f); rows=list(r); fn=r.fieldnames
+    if not inp or not isinstance(inp, str):
+        raise ValueError("input path must be a non-empty string")
+    if not out or not isinstance(out, str):
+        raise ValueError("output path must be a non-empty string")
+    try:
+        with open(inp, newline="", encoding="utf-8-sig") as f:
+            r=csv.DictReader(f); rows=list(r); fn=r.fieldnames
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Input file not found: {inp}")
+    except PermissionError:
+        raise PermissionError(f"Permission denied reading: {inp}")
+    if not fn:
+        raise ValueError(f"CSV file has no headers: {inp}")
     results=[]
     for row in rows:
         res=assess_row(row)
         merged={**row, "score": res["score"], "tier": res["tier"], "detail": ";".join(res["detail"].keys())}
         results.append(merged)
-    with open(out,"w",newline="",encoding="utf-8") as f:
-        w=csv.DictWriter(f, fieldnames=list(fn)+["score","tier","detail"]); w.writeheader(); w.writerows(results)
+    try:
+        with open(out,"w",newline="",encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=list(fn)+["score","tier","detail"]); w.writeheader(); w.writerows(results)
+    except PermissionError:
+        raise PermissionError(f"Permission denied writing: {out}")
     return results
 
 def build_parser():
@@ -76,13 +88,21 @@ def main(argv=None):
     import json as _json
     p=build_parser(); a=p.parse_args(argv)
     if a.cmd=="single":
-        if a.json:
-            present=_json.loads(a.json)
-        else:
-            present={k: getattr(a,k) for k in vars(a) if k not in ("cmd","json")}
-        res=calculate_score(present); print(res); return 0
+        try:
+            if a.json:
+                present=_json.loads(a.json)
+            else:
+                present={k: getattr(a,k) for k in vars(a) if k not in ("cmd","json")}
+            res=calculate_score(present); print(res); return 0
+        except _json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON input: {e}", file=sys.stderr); return 1
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr); return 1
     if a.cmd=="batch":
-        res=process_csv(a.input, a.output); print(f"Processed {len(res)} -> {a.output}"); return 0
+        try:
+            res=process_csv(a.input, a.output); print(f"Processed {len(res)} -> {a.output}"); return 0
+        except (FileNotFoundError, PermissionError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr); return 1
     p.print_help(); return 1
 
 if __name__=="__main__":
