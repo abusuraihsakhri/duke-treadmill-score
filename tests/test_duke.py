@@ -1,157 +1,127 @@
-"""
-Tests for duke.py core scoring module.
-"""
-import sys
-from pathlib import Path
-import tempfile
-import os
-sys.path.insert(0, str(Path(__file__).parent.parent))
+"""Regression tests for the clinically defined Duke Treadmill Score."""
+import csv
+import json
+import math
 
 import pytest
-import duke as m
+
+from duke import calculate_score, assess_row, process_csv, main
 
 
-def test_score():
-    r = m.calculate_score({'age': 68, 'sex': 'M', 'cancer': 1})
-    assert 'score' in r and 'tier' in r
-    r2 = m.calculate_score({'age': 30, 'sex': 'F'})
-    assert r2['score'] <= r['score']
+@pytest.mark.parametrize("minutes,st,angina,expected,tier", [
+    (12, 0, 0, 12, "low"),
+    (9, 1, 1, 0, "moderate"),
+    (4, 2, 2, -14, "high"),
+    (5, 0, 0, 5, "low"),
+    (4.99, 0, 0, 4.99, "moderate"),
+    (0, 2, 0, -10, "moderate"),
+    (0, 2.002, 0, -10.01, "high"),
+    (10.5, 0.5, 2, 0, "moderate"),
+])
+def test_reference_formula_and_risk_boundaries(minutes, st, angina, expected, tier):
+    result = calculate_score({
+        "exercise_minutes": minutes,
+        "st_deviation_mm": st,
+        "angina_index": angina,
+    })
+    assert result["score"] == pytest.approx(expected)
+    assert result["tier"] == tier
+    assert result["detail"]["st_penalty"] == pytest.approx(5 * st)
+    assert result["detail"]["angina_penalty"] == 4 * angina
 
 
-def test_calculate_score_empty():
-    """Empty dict should return score 0 and low tier."""
-    r = m.calculate_score({})
-    assert r['score'] == 0
-    assert r['tier'] == 'low'
-    assert r['detail'] == {}
-
-
-def test_calculate_score_all_factors():
-    """All factors present should return max score."""
-    present = {name: True for name, _ in m.FACTORS}
-    r = m.calculate_score(present)
-    expected_score = sum(w for _, w in m.FACTORS)
-    assert r['score'] == expected_score
-    assert r['tier'] == 'high'
-
-
-def test_calculate_score_various_inputs():
-    """Test various truthy/falsy input formats."""
-    # Test with 1/0
-    r1 = m.calculate_score({'Smoking': 1, 'Hypertension': 0})
-    assert r1['score'] == 1
-    # Test with yes/no
-    r2 = m.calculate_score({'Smoking': 'yes', 'Hypertension': 'no'})
-    assert r2['score'] == 1
-    # Test with true/false strings
-    r3 = m.calculate_score({'Smoking': 'true', 'Hypertension': 'false'})
-    assert r3['score'] == 1
-
-
-def test_calculate_score_invalid_input():
-    """Non-dict input should raise ValueError."""
+@pytest.mark.parametrize("data", [
+    {},
+    {"Smoking": True},
+    {"exercise_minutes": 5, "st_deviation_mm": 0},
+    {"exercise_minutes": -1, "st_deviation_mm": 0, "angina_index": 0},
+    {"exercise_minutes": 5, "st_deviation_mm": -1, "angina_index": 0},
+    {"exercise_minutes": math.nan, "st_deviation_mm": 0, "angina_index": 0},
+    {"exercise_minutes": 5, "st_deviation_mm": math.inf, "angina_index": 0},
+    {"exercise_minutes": True, "st_deviation_mm": 0, "angina_index": 0},
+    {"exercise_minutes": 5, "st_deviation_mm": 0, "angina_index": True},
+    {"exercise_minutes": 5, "st_deviation_mm": 0, "angina_index": 3},
+    {"exercise_minutes": 5, "st_deviation_mm": 0, "angina_index": 1.5},
+    "not a dictionary",
+    None,
+])
+def test_invalid_values_rejected(data):
     with pytest.raises(ValueError):
-        m.calculate_score("not a dict")
+        calculate_score(data)
+
+
+def test_csv_field_normalization_and_validation():
+    result = assess_row({
+        "Exercise Minutes": "9.5",
+        "ST-Deviation-mm": "0.5",
+        "ANGINA_INDEX": "1",
+        "patient_id": "RECORD-1",
+    })
+    assert result["score"] == pytest.approx(3.0)
+    with pytest.raises(ValueError, match="missing required"):
+        assess_row({"patient_id": "RECORD-1"})
+
+
+def test_batch_csv_and_formula_injection(tmp_path):
+    source = tmp_path / "input.csv"
+    output = tmp_path / "output.csv"
+    source.write_text(
+        "patient_id,exercise_minutes,st_deviation_mm,angina_index\n"
+        "=2+2,12,0,0\n"
+        "P002,4,2,2\n", encoding="utf-8"
+    )
+    rows = process_csv(str(source), str(output))
+    assert len(rows) == 2
+    assert rows[0]["score"] == 12
+    assert rows[1]["tier"] == "high"
+    with output.open(newline="", encoding="utf-8") as stream:
+        exported = list(csv.DictReader(stream))
+    assert exported[0]["patient_id"] == "'=2+2"
+    assert exported[0]["score"] == "12.0"
+    assert json.loads(exported[1]["detail"])["angina_index"] == 2
+
+
+def test_batch_failure_does_not_create_output(tmp_path):
+    source = tmp_path / "bad.csv"
+    output = tmp_path / "output.csv"
+    source.write_text(
+        "exercise_minutes,st_deviation_mm,angina_index\n"
+        "12,0,0\n"
+        "8,invalid,1\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="row 3"):
+        process_csv(str(source), str(output))
+    assert not output.exists()
+
+
+def test_batch_validation(tmp_path):
     with pytest.raises(ValueError):
-        m.calculate_score(None)
+        process_csv("", "out.csv")
     with pytest.raises(ValueError):
-        m.calculate_score([1, 2, 3])
-
-
-def test_calculate_score_tiers():
-    """Test tier thresholds."""
-    # Low tier (score <= 2)
-    r_low = m.calculate_score({'Smoking': 1})
-    assert r_low['tier'] == 'low'
-    # Moderate tier (score <= 4)
-    r_mod = m.calculate_score({'Smoking': 1, 'Hypertension': 1, 'Diabetes': 1})
-    assert r_mod['tier'] == 'moderate'
-    # High tier (score > 4)
-    r_high = m.calculate_score({name: 1 for name, _ in m.FACTORS})
-    assert r_high['tier'] == 'high'
-
-
-def test_assess_row():
-    """Test CSV row assessment."""
-    row = {'Smoking': '1', 'Hypertension': '0', 'Diabetes': 'yes'}
-    r = m.assess_row(row)
-    assert r['score'] == 2
-
-
-def test_assess_row_invalid():
-    """Non-dict row should raise ValueError."""
-    with pytest.raises(ValueError):
-        m.assess_row("not a dict")
-
-
-def test_process_csv():
-    """Test CSV batch processing."""
-    # Create a temp input file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
-        f.write("patient_id,Smoking,Hypertension,Diabetes\n")
-        f.write("P001,1,0,1\n")
-        f.write("P002,0,1,0\n")
-        inp = f.name
-    out = inp + '.out.csv'
-    try:
-        results = m.process_csv(inp, out)
-        assert len(results) == 2
-        assert results[0]['score'] == 2
-        assert results[1]['score'] == 1
-        # Verify output file exists
-        assert os.path.exists(out)
-    finally:
-        os.unlink(inp)
-        if os.path.exists(out):
-            os.unlink(out)
-
-
-def test_process_csv_file_not_found():
-    """Missing input file should raise FileNotFoundError."""
+        process_csv("in.csv", "")
     with pytest.raises(FileNotFoundError):
-        m.process_csv('nonexistent_file.csv', 'output.csv')
+        process_csv(str(tmp_path / "missing.csv"), str(tmp_path / "out.csv"))
 
 
-def test_process_csv_invalid_paths():
-    """Invalid paths should raise ValueError."""
-    with pytest.raises(ValueError):
-        m.process_csv('', 'output.csv')
-    with pytest.raises(ValueError):
-        m.process_csv('input.csv', '')
-    with pytest.raises(ValueError):
-        m.process_csv(None, 'output.csv')
+def test_cli_single_and_errors(capsys):
+    assert main(["single", "--exercise-minutes", "9",
+                 "--st-deviation-mm", "1", "--angina-index", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["score"] == 0
+    assert main(["single", "--json",
+                 '{"exercise_minutes":12,"st_deviation_mm":0,"angina_index":0}']) == 0
+    assert json.loads(capsys.readouterr().out)["tier"] == "low"
+    assert main(["single", "--json", "not json"]) == 1
+    assert main(["single", "--exercise-minutes", "10"]) == 1
+    assert main(["single", "--json",
+                 '{"exercise_minutes":4,"st_deviation_mm":0,"angina_index":0}',
+                 "--exercise-minutes", "5"]) == 1
 
 
-def test_main_single():
-    """Test CLI single command."""
-    assert m.main(['single', '--smoking', '1']) == 0
-
-
-def test_main_single_json():
-    """Test CLI single command with JSON."""
-    assert m.main(['single', '--json', '{"Smoking": true}']) == 0
-
-
-def test_main_single_invalid_json():
-    """Test CLI single command with invalid JSON."""
-    assert m.main(['single', '--json', 'not valid json']) == 1
-
-
-def test_main_batch():
-    """Test CLI batch command."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
-        f.write("patient_id,Smoking\n")
-        f.write("P001,1\n")
-        inp = f.name
-    out = inp + '.out.csv'
-    try:
-        assert m.main(['batch', '--input', inp, '--output', out]) == 0
-    finally:
-        os.unlink(inp)
-        if os.path.exists(out):
-            os.unlink(out)
-
-
-def test_main_batch_missing_file():
-    """Test CLI batch command with missing file."""
-    assert m.main(['batch', '--input', 'nonexistent.csv', '--output', 'out.csv']) == 1
+def test_cli_batch(tmp_path):
+    source = tmp_path / "input.csv"
+    target = tmp_path / "output.csv"
+    source.write_text("exercise_minutes,st_deviation_mm,angina_index\n12,0,0\n",
+                      encoding="utf-8")
+    assert main(["batch", "--input", str(source), "--output", str(target)]) == 0
+    assert target.exists()
+    assert main(["batch", "--input", "nonexistent.csv", "--output", str(target)]) == 1

@@ -12,6 +12,20 @@ from agents.base import AuditLogger
 supervisor = SystemSupervisor(model_provider="mock")
 
 
+
+def _parse_csv_bool(value):
+    """Parse CSV Boolean fields without treating the string 'false' as True."""
+    if isinstance(value, bool):
+        return value
+    if value is None or str(value).strip() == "":
+        return False
+    lowered = str(value).strip().lower()
+    if lowered in ("true", "1", "yes", "y"):
+        return True
+    if lowered in ("false", "0", "no", "n"):
+        return False
+    raise ValueError("is_critical_flag must be true/false or 1/0")
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="duke-treadmill-score", description="Duke Treadmill Score")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -102,7 +116,7 @@ def main(argv=None):
                     primary_metric=float(r.get("primary_metric", 15.0)),
                     secondary_metric=float(r.get("secondary_metric", 5.0)),
                     status_descriptor=r.get("status_descriptor", "NOMINAL"),
-                    is_critical_flag=bool(r.get("is_critical_flag", False)),
+                    is_critical_flag=_parse_csv_bool(r.get("is_critical_flag", False)),
                 )
             except (ValueError, TypeError) as e:
                 print(f"Error: Invalid data in row {r}: {e}", file=sys.stderr)

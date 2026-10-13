@@ -1,164 +1,88 @@
 # Duke Treadmill Score
 
-> **Domain:** Cardiovascular Medicine & Hemodynamic Analytics  
-> **Reference Guidelines & Standards:** AHA/ACC Practice Guidelines & ESC Clinical Standards
+A standalone browser calculator and Python CLI/API implementation of the **Duke Treadmill Score (DTS)** for prognostic stratification following exercise ECG. The browser calculator needs no server and works offline.
 
-<div align="center">
+## Clinical definition
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Zero-PHI Guard](https://img.shields.io/badge/Guard-Zero--PHI_Outbound-blue.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+**DTS = exercise duration (minutes) − 5 × maximum net ST-segment deviation (mm) − 4 × treadmill angina index.**
 
-</div>
+The original score uses exercise duration on the **standard Bruce protocol** (or an appropriately converted equivalent). Angina index: 0 = none; 1 = non-limiting; 2 = exercise-limiting.
 
----
+| Score | Prognostic stratum |
+| --- | --- |
+| ≥ +5 | Low |
+| −10 to < +5 | Moderate |
+| < −10 | High |
 
-## What It Does
+These categories do not establish coronary artery disease or independently determine management. Interpretation depends on the clinical context, test quality, and population studied.
 
-Duke Treadmill Score Calculator — computes cardiovascular risk scores from clinical factors including smoking, hypertension, diabetes, prior stroke, and vascular disease. Produces a points-based score with tiered risk thresholds (low, moderate, high).
+**Reference:** Mark DB et al. Prognostic value of a treadmill exercise score in outpatients with suspected coronary artery disease. *N Engl J Med.* 1991;325:849–853. [doi:10.1056/NEJM199109193251204](https://doi.org/10.1056/NEJM199109193251204).
 
----
+## Browser calculator
 
-## Key Modules
+Open **web/index.html** directly in a current browser. Enter exercise duration, maximal ST deviation, and angina index; select **Calculate score**. The score, arithmetic breakdown, and category appear immediately. **Download CSV result** exports only numeric inputs and the score.
 
-### Core Scoring (`duke.py`)
-- **`calculate_score(present)`** — Computes score from a dictionary of clinical factors.
-- **`assess_row(row)`** — Maps CSV row data to scoring factors.
-- **`process_csv(inp, out)`** — Batch processes CSV files with scoring results.
-- **`main()`** — CLI entry point for single and batch operations.
+The browser application uses HTML and JavaScript, makes no API requests, saves nothing to browser storage, and requires no external scripts. The same static files can be hosted on GitHub Pages using the deployment job in .github/workflows/ci.yml. GitHub Pages must be enabled with **GitHub Actions** as the publishing source.
 
-### Enterprise Agent Suite (`agents/`)
-- **`supervisor.py`** — Multi-worker orchestration with consensus dossier generation.
-- **`workers.py`** — Specialized workers: InvariantQC, SafetyEscalation, ProtocolConformance.
-- **`base.py`** — PHI outbound guard and HMAC-SHA256 tamper-evident audit trail.
-- **`api.py`** — FastAPI REST server with `/health`, `/metrics`, `/api/audit`, `/api/chat` endpoints.
-- **`models.py`** — Pydantic schemas for task payloads, alerts, and dossiers.
+## Python CLI
 
-### CLI (`cli.py`)
-- **`audit`** — Run single task evaluation with multi-worker analysis.
-- **`chat`** — Query the supervisory LLM adapter.
-- **`batch`** — Batch process CSV records through the agent pipeline.
-- **`verify-audit`** — Verify HMAC audit trail integrity.
-- **`serve`** — Launch FastAPI REST server.
+Core score and CSV batch scoring need only Python 3.10+ (standard library):
 
----
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/abusuraihsakhri/duke-treadmill-score.git
-cd duke-treadmill-score
-
-# Create virtual environment (recommended)
-python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
----
-
-## Usage
-
-### Core Scoring CLI (`duke.py`)
-
-**Single evaluation:**
-```bash
-python duke.py single --age 68 --sex M --smoking 1 --hypertension 1
-```
-
-**With JSON input:**
-```bash
-python duke.py single --json '{"Smoking": true, "Diabetes": true}'
-```
-
-**Batch CSV processing:**
-```bash
+~~~bash
+python duke.py single --exercise-minutes 9 --st-deviation-mm 1 --angina-index 1
+python duke.py single --json '{"exercise_minutes":9,"st_deviation_mm":1,"angina_index":1}'
 python duke.py batch --input sample.csv --output results.csv
-```
+~~~
 
-### Enterprise CLI (`cli.py`)
+The single example yields **0 (moderate)**. CSV requires headers **exercise_minutes**, **st_deviation_mm**, and **angina_index**; additional columns are retained. All measurements must be finite and non-negative, and angina index must be 0, 1, or 2. Missing values cause errors rather than assuming zero. Spreadsheet formula-like cells in passthrough columns are neutralized on CSV export.
 
-**Run audit evaluation:**
-```bash
-python cli.py audit --task-id TASK-001 --primary 28.5 --secondary 14.2
-```
+## Local API
 
-**Batch processing:**
-```bash
-python cli.py batch -i sample.csv -o results.csv
-```
-
-**Verify audit integrity:**
-```bash
-python cli.py verify-audit
-```
-
-**Start API server:**
-```bash
+~~~bash
+python -m pip install -r requirements.txt
 python cli.py serve --host 127.0.0.1 --port 8000
-```
+~~~
 
----
+The API serves the same browser application at http://127.0.0.1:8000/ and provides the clinical score endpoint:
 
-## API Endpoints
+~~~bash
+curl -s http://127.0.0.1:8000/api/duke \
+  -H 'Content-Type: application/json' \
+  -d '{"exercise_minutes":9,"st_deviation_mm":1,"angina_index":1}'
+~~~
 
-| Endpoint | Method | Description |
-|:---------|:-------|:------------|
-| `/health` | GET | Service health check |
-| `/metrics` | GET | Operational metrics |
-| `/api/audit` | POST | Submit task for evaluation |
-| `/api/chat` | POST | Query supervisory chat |
-| `/api/audit/logs` | GET | Retrieve audit trail |
+Current API schemas are generated automatically at **/openapi.json** and interactive documentation is served at **/docs**.
 
----
+### Separate legacy task-audit demonstration
 
-## Testing
+The existing generic worker/audit subsystem remains available through **cli.py audit/chat/batch/verify-audit** and endpoints **/api/audit**, **/api/chat**, **/api/audit/logs**, and **/metrics**. Its generic QC thresholds and alerts are **not Duke Treadmill Score calculations** and have not been clinically validated. The chat responder returns demonstration text, not a medical assessment.
 
-```bash
-# Run full test suite
-pytest -v
+### Docker
 
-# Run with coverage
-pytest -v --cov=.
-```
+~~~bash
+docker compose up --build
+~~~
 
----
+Compose exposes port 8000 only on 127.0.0.1 by default. The API has no authentication and must not be publicly exposed without additional controls.
 
-## Security
+## Tests
 
-- **Zero-PHI Outbound Guard:** AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
-- **HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation.
-- **Secure Defaults:** Audit keys are generated using `secrets.token_hex()` when not provided via environment variable.
+~~~bash
+python -m pip install -r requirements.txt
+python -m pytest -q
+node --test web/calculator.test.cjs
+~~~
 
-### Environment Variables
+CI tests Python 3.10–3.12 and Node.js 22, then attempts GitHub Pages publishing after a successful push to master.
 
-| Variable | Description | Default |
-|:---------|:------------|:--------|
-| `AUDIT_SECRET_KEY` | Secret key for HMAC audit trail | Auto-generated (random) |
-| `MODEL_PROVIDER` | LLM provider for chat | `mock` |
+## Privacy and limitations
 
----
+- The static calculator computes locally, without uploads, external JavaScript, or persistent storage.
+- The optional API and CLI process local inputs; the legacy audit demonstration stores its registry and audit trail in process memory.
+- Legacy regex identifier detection is **not comprehensive de-identification** and does not establish HIPAA compliance. Do not enter identifiable patient data.
+- Audit records use HMAC-SHA256 signatures while the process is running. The generated key and trail are not persistently stored.
+- The application has not undergone independent clinical software validation and is intended for education and research, not autonomous clinical decision-making.
 
-## Docker Deployment
+## Technology and license
 
-```bash
-# Build and run with Docker Compose
-AUDIT_SECRET_KEY=$(openssl rand -hex 32) docker-compose up --build
-
-# Or build and run manually
-docker build -t duke-treadmill-score .
-docker run -p 8000:8000 -e AUDIT_SECRET_KEY=$(openssl rand -hex 32) duke-treadmill-score
-```
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+Python 3.10+, FastAPI/Pydantic for the optional API, and standard HTML/JavaScript for the browser interface. Compatible with current Chromium, Firefox, and Safari browsers. [MIT License](LICENSE).

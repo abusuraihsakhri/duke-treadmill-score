@@ -89,3 +89,19 @@ class TestAuditTrail:
         trail = AuditTrail()
         trail.log("actor1", "tier1", "EVENT1", {"a": 1})
         assert len(trail.get_trail()) == 1
+
+
+def test_hmac_detects_modified_signed_fields():
+    """Changing a signed field must fail even when chain pointers still match."""
+    trail = AuditTrail(secret_key="test-only-key")
+    trail.log("worker", "tier", "EVENT", {"value": 1})
+    assert trail.verify_integrity()
+    trail.logs[0]["actor"] = "attacker"
+    assert not trail.verify_integrity()
+
+
+def test_hmac_detects_payload_hash_tampering():
+    trail = AuditTrail(secret_key="test-only-key")
+    trail.log("worker", "tier", "EVENT", {"value": 1})
+    trail.logs[0]["payload_hash"] = "0" * 64
+    assert not trail.verify_integrity()
