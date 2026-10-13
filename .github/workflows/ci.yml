@@ -66,3 +66,11 @@ jobs:
       - name: Publish
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify live Pages HTML and JavaScript
+        shell: bash
+        run: |
+          PAGE_URL="${{ steps.deployment.outputs.page_url }}"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "$PAGE_URL" -o /tmp/duke-pages.html
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 "${PAGE_URL}calculator.js" -o /tmp/duke-calculator.js
+          grep -q 'Exercise duration (minutes)' /tmp/duke-pages.html
+          grep -q 'calculateDukeScore' /tmp/duke-calculator.js

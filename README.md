@@ -1,5 +1,7 @@
 # Duke Treadmill Score
 
+### [Open the Live Application →](https://abusuraihsakhri.github.io/duke-treadmill-score/)
+
 A standalone browser calculator and Python CLI/API implementation of the **Duke Treadmill Score (DTS)** for prognostic stratification following exercise ECG. The browser calculator needs no server and works offline.
 
 ## Clinical definition
