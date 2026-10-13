@@ -1,4 +1,4 @@
-patient_id,age,sex,prior_vte,cancer,immobility,surgery
-P001,68,M,0,1,1,0
-P002,45,F,0,0,0,1
-P003,71,M,1,0,1,1
+record_id,exercise_minutes,st_deviation_mm,angina_index
+E001,12,0,0
+E002,9,1,1
+E003,4,2,2
