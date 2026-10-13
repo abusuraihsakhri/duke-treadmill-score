@@ -1,20 +1,28 @@
-"""
-FastAPI REST API Server for Duke Treadmill Score.
-"""
-from typing import Dict, Any, List
+"""REST endpoints for the clinical calculator and legacy task-audit subsystem."""
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from .base import AuditLogger, PHIGuard
-from .models import SystemTaskPayload, ConsensusDossier
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, StrictInt
+
+from duke import calculate_score
+from .base import AuditLogger
+from .models import SystemTaskPayload
 from .supervisor import SystemSupervisor
 
 supervisor = SystemSupervisor(model_provider="mock")
 
 app = FastAPI(
     title="Duke Treadmill Score API",
-    description="Enterprise Distributed Component Platform (Clinical & Biomedical AI)",
-    version="3.0.0-ENTERPRISE",
+    description="Clinical exercise-ECG score calculation and separate legacy task-audit endpoints.",
+    version="1.0.0",
 )
+
+
+class DukeRequest(BaseModel):
+    exercise_minutes: float = Field(ge=0, allow_inf_nan=False)
+    st_deviation_mm: float = Field(ge=0, allow_inf_nan=False)
+    angina_index: StrictInt = Field(ge=0, le=2)
 
 
 class ChatRequest(BaseModel):
@@ -23,7 +31,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "HEALTHY", "service": "duke-treadmill-score", "domain": "Clinical & Biomedical AI", "standard": "CAP / CLSI / ISO Standards", "version": "3.0.0-ENTERPRISE"}
+    return {"status": "healthy", "service": "duke-treadmill-score", "version": "1.0.0"}
 
 
 @app.get("/metrics")
@@ -31,25 +39,32 @@ def metrics():
     return {
         "dossiers_processed_total": len(supervisor.dossier_registry),
         "audit_blocks_total": len(AuditLogger.get_trail()),
-        "system_status": "NOMINAL_OPTIMAL"
     }
+
+
+@app.post("/api/duke")
+def api_duke(payload: DukeRequest):
+    return calculate_score(payload.model_dump())
 
 
 @app.post("/api/audit")
 def api_audit(payload: SystemTaskPayload):
-    dossier = supervisor.process_task(payload)
-    return dossier.to_dict()
+    return supervisor.process_task(payload).to_dict()
 
 
 @app.post("/api/chat")
 def api_chat(req: ChatRequest):
     try:
-        ans = supervisor.query_supervisory_chat(req.query)
-        return {"response": ans}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"response": supervisor.query_supervisory_chat(req.query)}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request")
 
 
 @app.get("/api/audit/logs")
 def api_audit_logs():
     return {"audit_trail": AuditLogger.get_trail(), "verified": AuditLogger.verify_integrity()}
+
+
+# Mounted last: /api/* and /health retain priority over static assets.
+app.mount("/", StaticFiles(directory=str(Path(__file__).resolve().parent.parent / "web"),
+                           html=True), name="calculator")
