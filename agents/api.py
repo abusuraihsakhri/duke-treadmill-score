@@ -3,10 +3,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, Field, StrictInt, field_validator
 
 from duke import calculate_score
-from .base import AuditLogger
+from .base import AuditLogger, SecurityException
 from .models import SystemTaskPayload
 from .supervisor import SystemSupervisor
 
@@ -23,6 +23,13 @@ class DukeRequest(BaseModel):
     exercise_minutes: float = Field(ge=0, allow_inf_nan=False)
     st_deviation_mm: float = Field(ge=0, allow_inf_nan=False)
     angina_index: StrictInt = Field(ge=0, le=2)
+
+    @field_validator('exercise_minutes', 'st_deviation_mm', mode='before')
+    @classmethod
+    def reject_boolean_measurements(cls, value):
+        if isinstance(value, bool):
+            raise ValueError('Measurement must be a number, not a boolean')
+        return value
 
 
 class ChatRequest(BaseModel):
@@ -56,8 +63,8 @@ def api_audit(payload: SystemTaskPayload):
 def api_chat(req: ChatRequest):
     try:
         return {"response": supervisor.query_supervisory_chat(req.query)}
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid request")
+    except (SecurityException, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Request failed validation") from exc
 
 
 @app.get("/api/audit/logs")
